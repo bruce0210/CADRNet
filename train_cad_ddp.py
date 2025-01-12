@@ -176,7 +176,7 @@ def main():
             broadcast_buffers=False,
             device_ids=[args.local_rank],
             output_device=args.local_rank,
-            find_unused_parameters=False  # Set to False unless you have unused parameters
+            find_unused_parameters=True  # 设置为 True 以允许未使用的参数
         )
         logger.info('Model wrapped with DistributedDataParallel')
     else:
@@ -265,7 +265,7 @@ def main():
                 exit(0)
 
     # **处理测试模式**
-    if args.test_only and args.local_rank == 0:
+    if args.test_only and (args.local_rank == 0 or not distributed):
         logger.info("=> Conducting do_eval on test set")
         # Determine which checkpoint to load
         test_ckpt = args.load_ckpt if args.load_ckpt else os.path.join(cfg.log_dir, 'best_model.pth')
@@ -289,7 +289,7 @@ def main():
         exit(0)
 
     # **处理验证模式**
-    if args.val_only and args.local_rank == 0:
+    if args.val_only and (args.local_rank == 0 or not distributed):
         logger.info("=> Conducting do_eval on validation set")
         # Determine which checkpoint to load
         val_ckpt = args.load_ckpt if args.load_ckpt else os.path.join(cfg.log_dir, 'best_model.pth')
@@ -373,11 +373,11 @@ def main():
                 optimizer.step()
                 _tqdm.set_postfix(loss=loss.item(), l_seg=loss_seg.item())
 
-                if i % args.log_step == 0 and args.local_rank == 0:
+                if i % args.log_step == 0 and (args.local_rank == 0 or not distributed):
                     logger.info(f'Train loss: {round(loss.item(), 5)}, loss seg: {round(loss_seg.item(), 5)})')
 
         # Save last model
-        if args.local_rank == 0:
+        if (args.local_rank == 0 or not distributed):
             logger.info('Saving last model...')
             savepath = os.path.join(cfg.log_dir, 'last_model.pth')
             state = {
@@ -391,7 +391,7 @@ def main():
 
         # Validation
         eval = get_eval_criteria(epoch)
-        if eval and args.local_rank == 0:
+        if eval and (args.local_rank == 0 or not distributed):
             logger.info('Performing validation...')
             model.eval()  # 设置模型为评估模式
             with torch.no_grad():
@@ -416,4 +416,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
