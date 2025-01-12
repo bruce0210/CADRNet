@@ -95,7 +95,7 @@ def main():
     parser.add_argument('--val_ratio', type=float, help='pick validation set', default=0.05)
     parser.add_argument('--seed', type=int, help='random seed', default=123)
     parser.add_argument('--cvt_color', action="store_true")
-    parser.add_argument('--thread_num', type=int, help='multiprocess number', default=32)
+    parser.add_argument('--thread_num', type=int, help='multiprocess number', default=64)
     
     # 新添加的命令行参数
     parser.add_argument('--train_00', type=str, help='Path to train_00 dataset')
