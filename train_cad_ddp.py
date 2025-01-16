@@ -12,6 +12,7 @@ from eval import do_eval, get_eval_criteria
 
 import torch.multiprocessing
 import logging
+from collections import OrderedDict
 
 # 设置 multiprocessing 启动方式
 try:
@@ -21,6 +22,7 @@ except RuntimeError:
 
 torch.backends.cudnn.benchmark = True
 torch.autograd.set_detect_anomaly(True)
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train segmentation network')
@@ -75,6 +77,7 @@ def parse_args():
     args = parser.parse_args()
     return args
 
+
 def custom_collate(batch):
     """
     自定义 collate_fn，处理可变长度的张量。
@@ -104,6 +107,31 @@ def custom_collate(batch):
         padded_target[i, :n] = target_list[i].squeeze(1)  # 假设 target 是 [N_i, 1]
 
     return images, padded_xy, padded_target, rgb_info, nns, offset_gt, inst_gt, index, basename
+
+
+def adjust_state_dict(state_dict, distributed):
+    """
+    调整 state_dict 的键名以匹配当前模型的包装方式。
+    如果 distributed 为 True，确保键名有 'module.' 前缀。
+    如果 distributed 为 False，确保键名没有 'module.' 前缀。
+    """
+    new_state_dict = OrderedDict()
+    if distributed:
+        # 如果没有 'module.' 前缀，则添加
+        if not all(k.startswith('module.') for k in state_dict.keys()):
+            for k, v in state_dict.items():
+                new_state_dict['module.' + k] = v
+        else:
+            new_state_dict = state_dict
+    else:
+        # 如果有 'module.' 前缀，则移除
+        for k, v in state_dict.items():
+            if k.startswith('module.'):
+                new_state_dict[k[7:]] = v
+            else:
+                new_state_dict[k] = v
+    return new_state_dict
+
 
 def main():
     args = parse_args()
@@ -238,7 +266,9 @@ def main():
         if cfg.load_ckpt != '':
             if os.path.exists(cfg.load_ckpt):
                 checkpoint = torch.load(cfg.load_ckpt, map_location=device)
-                model.load_state_dict(checkpoint['model_state_dict'])
+                state_dict = checkpoint['model_state_dict']
+                adjusted_state_dict = adjust_state_dict(state_dict, distributed)
+                model.load_state_dict(adjusted_state_dict)
                 logger.info(f"=> Loaded checkpoint '{cfg.load_ckpt}' (epoch {checkpoint['epoch']})")
                 # 打印模型部分参数范数
                 for name, param in model.named_parameters():
@@ -252,7 +282,9 @@ def main():
             if os.path.exists(cfg.resume_ckpt):
                 checkpoint = torch.load(cfg.resume_ckpt, map_location=device)
                 start_epoch = checkpoint['epoch']
-                model.load_state_dict(checkpoint['model_state_dict'])
+                state_dict = checkpoint['model_state_dict']
+                adjusted_state_dict = adjust_state_dict(state_dict, distributed)
+                model.load_state_dict(adjusted_state_dict)
                 optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
                 # Move optimizer state to device
                 for state in optimizer.state.values():
@@ -276,7 +308,9 @@ def main():
         logger.info(f"Attempting to load checkpoint from: {test_ckpt}")  # 添加调试日志
         if os.path.exists(test_ckpt):
             checkpoint = torch.load(test_ckpt, map_location=device)
-            model.load_state_dict(checkpoint['model_state_dict'])
+            state_dict = checkpoint['model_state_dict']
+            adjusted_state_dict = adjust_state_dict(state_dict, distributed)
+            model.load_state_dict(adjusted_state_dict)
             logger.info(f"=> Loaded checkpoint '{test_ckpt}' (epoch {checkpoint['epoch']})")
         else:
             logger.error(f"=> Failed: no checkpoint found at '{test_ckpt}'")
@@ -300,7 +334,9 @@ def main():
         logger.info(f"Attempting to load checkpoint from: {val_ckpt}")  # 添加调试日志
         if os.path.exists(val_ckpt):
             checkpoint = torch.load(val_ckpt, map_location=device)
-            model.load_state_dict(checkpoint['model_state_dict'])
+            state_dict = checkpoint['model_state_dict']
+            adjusted_state_dict = adjust_state_dict(state_dict, distributed)
+            model.load_state_dict(adjusted_state_dict)
             logger.info(f"=> Loaded checkpoint '{val_ckpt}' (epoch {checkpoint['epoch']})")
         else:
             logger.error(f"=> Failed: no checkpoint found at '{val_ckpt}'")
@@ -324,8 +360,8 @@ def main():
     logger.info(f"> Starting training from epoch {start_epoch}")
 
     for epoch in range(start_epoch, cfg.epoch):
-        if distributed:
-            train_sampler.set_epoch(epoch)
+        if train_sampler is not None:
+            train_sampler.set_epoch(epoch)  # 修改: 仅在 train_sampler 存在时调用
 
         logger.info(f"\nEpoch {epoch + 1}/{cfg.epoch}")
         lr = max(cfg.learning_rate * (cfg.lr_decay ** (epoch // cfg.step_size)),
@@ -413,6 +449,7 @@ def main():
                 torch.save(state, savepath)
 
         global_epoch += 1
+
 
 if __name__ == '__main__':
     main()
