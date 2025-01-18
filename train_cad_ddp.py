@@ -133,6 +133,10 @@ def adjust_state_dict(state_dict, distributed):
     return new_state_dict
 
 
+# == 新增：从 utils_enhanced.py 文件中导入 FocalLoss ==
+from utils.utils_enhanced import FocalLoss
+
+
 def main():
     args = parse_args()
     cfg = update_config(config, args)
@@ -180,7 +184,10 @@ def main():
 
     # Create Model
     model = CADTransformer(cfg)
-    CE_loss = torch.nn.CrossEntropyLoss().to(device)
+
+    # == 修改：用 FocalLoss 替代原来的 CrossEntropyLoss（可自行调参）==
+    # 如果想恢复原版: CE_loss = torch.nn.CrossEntropyLoss().to(device)
+    CE_loss = FocalLoss(gamma=2.0, alpha=1.0, reduction='mean').to(device)
 
     # Create Optimizer
     if cfg.optimizer == 'Adam':
@@ -305,7 +312,7 @@ def main():
             test_ckpt = os.path.join(cfg.log_dir, 'last_model.pth')
             logger.warning(f"=> 'best_model.pth' not found. Using 'last_model.pth' instead.")
 
-        logger.info(f"Attempting to load checkpoint from: {test_ckpt}")  # 添加调试日志
+        logger.info(f"Attempting to load checkpoint from: {test_ckpt}")
         if os.path.exists(test_ckpt):
             checkpoint = torch.load(test_ckpt, map_location=device)
             state_dict = checkpoint['model_state_dict']
@@ -331,7 +338,7 @@ def main():
             val_ckpt = os.path.join(cfg.log_dir, 'last_model.pth')
             logger.warning(f"=> 'best_model.pth' not found. Using 'last_model.pth' instead.")
 
-        logger.info(f"Attempting to load checkpoint from: {val_ckpt}")  # 添加调试日志
+        logger.info(f"Attempting to load checkpoint from: {val_ckpt}")
         if os.path.exists(val_ckpt):
             checkpoint = torch.load(val_ckpt, map_location=device)
             state_dict = checkpoint['model_state_dict']
@@ -426,8 +433,8 @@ def main():
             torch.save(state, savepath)
 
         # Validation
-        eval = get_eval_criteria(epoch)
-        if eval and (args.local_rank == 0 or not distributed):
+        eval_flag = get_eval_criteria(epoch)
+        if eval_flag and (args.local_rank == 0 or not distributed):
             logger.info('Performing validation...')
             model.eval()  # 设置模型为评估模式
             with torch.no_grad():

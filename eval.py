@@ -11,6 +11,11 @@ torch.autograd.set_detect_anomaly(True)
 num_gpus = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
 distributed = num_gpus > 1
 
+
+# == 新增：从 utils_enhanced.py 文件中导入 threshold_filter, nms_postprocessing ==
+from utils.utils_enhanced import threshold_filter, nms_postprocessing
+import torch.nn.functional as F
+
 def do_eval(model, dataloader, logger, cfg):
     logger.info(f'> Conducting do_eval')
     model.eval()
@@ -39,9 +44,19 @@ def do_eval(model, dataloader, logger, cfg):
             seg_pred = model(image, xy, rgb_info, nns)
             seg_pred = seg_pred.contiguous().view(-1, cfg.num_class + 1)
             target = target.view(-1)
-            pred_choice = seg_pred.argmax(dim=1)
+
+            # == 使用基于置信度阈值的过滤 ==
+            pred_label, pred_conf = threshold_filter(seg_pred, threshold=0.4)
             
-            for prd, gt in zip(pred_choice, target):
+            # == 进一步进行基于距离的 NMS 去重 ==
+            xy_flat = xy.view(-1, 2)
+            idx_keep = nms_postprocessing(xy_flat, pred_label, pred_conf, dist_threshold=5.0)
+            # 对未保留索引的预测设为 0(背景)
+            nms_labels = torch.zeros_like(pred_label)
+            nms_labels[idx_keep] = pred_label[idx_keep]
+
+            # 统计
+            for prd, gt in zip(nms_labels, target):
                 cnt_prd[prd] += 1
                 cnt_gt[gt] += 1
                 if prd == gt:
